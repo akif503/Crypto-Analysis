@@ -32,7 +32,7 @@ def main():
             while not future.done():
                 _ = fetch_and_update()
                 next_update_time = (datetime.now() + timedelta(minutes=1)).astimezone().strftime('%I:%M:%S %p')
-                print(f"Next update in (1 minutes): {next_update_time}")
+                print(f"Next update in (1 minute): {next_update_time}")
                 time.sleep(60)
 
     # This function visualizes the historical prices based on interval.
@@ -44,10 +44,6 @@ def main():
         plot_interval(intervals, ['hour', 'day'])
         plt.show()
         
-    # When the program is run without any options, it will give out the latest price
-    else:
-        print(f"Latest: {round(float(data['prices']['latest']), 2)}")
-
 
 def fetch_and_update():
     """
@@ -93,7 +89,7 @@ def do_quit():
     A function to run a concurrent loop to listen for "quitting" signal.
     """
 
-    print("Enter Q<enter> to quit. You might have to wait a minute before the program stops.")
+    print("Enter Q<enter> to quit. You might have to wait a maximum of 1 minute before the program stops.")
     
     while (m := input().strip()) != 'Q':
         if m:
