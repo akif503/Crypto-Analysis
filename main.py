@@ -5,19 +5,23 @@
 # 4. The definition of interval might be misleading here; An example would clear it up:
 #    If we are getting the price of a coin in interval=hour, then we mean the historical prices in the past hour
 
+from pprint import pprint
+
 import requests, json, sys, time
 import matplotlib.pyplot as plt
 from math import ceil
 import numpy as np
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from db import update_db
 from matplotlib.animation import FuncAnimation
 import matplotlib.animation as animation
 from matplotlib.lines import Line2D
 import matplotlib.dates as mdates
 import matplotlib.text as mtext
+from matplotlib.patches import Rectangle
 import sqlite3
+
+from db import update_db
 
 
 def main():
@@ -32,7 +36,7 @@ def main():
     option = option.lower()
 
     # This option collects price data every minute and stores it into the database in perpetuity until interrupted by the user.
-    if option == '--loop':
+    if option == '--collect':
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(do_quit)
 
@@ -45,16 +49,17 @@ def main():
     # This function visualizes the historical prices based on interval.
     elif option == '--viz':
         # Graph of the intervals
-        plt.figure(figsize=(16, 8))
+        plt.figure(figsize=(12, 6))
         # Use the second param to select between intervals: ['hour', 'day', 'week', 'month', 'year']
         plot_interval(intervals, ['hour', 'day'])
         plt.show()
 
-    elif option == '--realtime':
+    elif option == '--live':
         # Update an existing graph every minute:
-        fig = plt.figure(figsize=(16, 9))
+        fig = plt.figure(figsize=(12,6))
         ax = plt.subplot(111)
-        latest_price_text = ax.text(0, 0, "")
+        # The text boxes correlate to: latest_price, current_time, percent_change over the period respectively
+        texts = [ax.text(0, 0, ""), ax.text(0, 0, ""), ax.text(0, 0, "")]
 
         conn = sqlite3.connect('crypto.db')
         cursor = conn.cursor()
@@ -65,20 +70,19 @@ def main():
 
         line = plt.plot(times, prices, color='b')[0]
 
-        update_axis(times, prices, ax, latest_price_text)
+        update_axis(times, prices, ax, texts)
 
-        anim = FuncAnimation(fig, animate, frames=1000, repeat=False, init_func=None, blit=False, interval = 10 * 1000, fargs=(cursor, line, ax, latest_price_text))
+        anim = FuncAnimation(fig, animate, frames=1000, repeat=False, init_func=None, blit=False, interval = 10 * 1000, fargs=(cursor, line, ax, texts))
 
         Writer = animation.writers['ffmpeg']
         writer = Writer(fps=1, metadata=dict(artist='Akif'), bitrate=1800)
 
         #anim.save('data.mp4', writer=writer)
         
-        plt.tight_layout()
+        #plt.tight_layout()
         plt.show()
 
-
-def animate(frame, cursor, line, ax, latest_price_text):
+def animate(frame, cursor, line, ax, texts):
     print(frame)
     _ = fetch_and_update()
 
@@ -86,17 +90,17 @@ def animate(frame, cursor, line, ax, latest_price_text):
     timestamps, prices = extract_last_hour_data(cursor)
     times = set_datetime_axis(ax, timestamps)
 
-    print(times[-1], prices[-1])
     line.set_data(times, prices)
 
-    update_axis(times, prices, ax, latest_price_text)
+    update_axis(times, prices, ax, texts)
 
     return line
-    #ax.set_title(interval.capitalize())
 
-def update_axis(times, prices, ax, latest_price_text):
+def update_axis(times, prices, ax, texts):
+    latest_price_text, current_time_text, percent_change_text = texts
+
     ax.set_ylim(min(prices) - 10, max(prices) + 10)
-    ax.set_xticks(times)
+    ax.set_xticks(times[::5] + [times[-1]])
     ax.set_xlim(times[0], times[-1])
 
     # Update Latest price text
@@ -107,6 +111,50 @@ def update_axis(times, prices, ax, latest_price_text):
         fontsize = 'xx-large'
     )
 
+    # Update current time text
+    current_time_text.set(
+        x = times[-1],
+        y = max(prices) + 10.5,
+        text = f"Current Time: {times[-1]}",
+        fontsize = 'xx-large'
+    )
+
+    # This gets the width and height of current_time_text interms of data coordinates
+    # The x-axis is a real number line stretching from 0 to 59
+    bb = ((m := current_time_text).get_window_extent(m.get_figure().canvas.get_renderer()).inverse_transformed(ax.transData))
+
+    # Adjust the text box's x coord by shifting it to the left by its width 
+    current_time_text.set(
+        x = bb.x0 - (bb.width),
+        transform=ax.transData
+    )
+
+    # Percent Change:
+    percent_change = (((prices[-1] - prices[0]) / prices[0]) * 100)
+
+    lp_bb = ((m := latest_price_text).get_window_extent(m.get_figure().canvas.get_renderer()).inverse_transformed(ax.transData))
+    percent_change_text.set(
+        x = lp_bb.x1+0.1,
+        y = lp_bb.y1,
+        text = f"{'-' if percent_change < 0 else '+'}{percent_change:.2f}%",
+        color = 'r' if percent_change < 0 else 'g',
+        transform=ax.transData
+    )
+
+
+    # TODO: Draw candle sticks (OHLC charts)
+    #select_color = lambda diff: 'r' if diff < 0 else 'g'
+    """
+    ax.add_patch(Rectangle(
+        xy=(0, prices[0]),
+        width=1,
+        height=abs(m := (prices[1]-prices[0])),
+        fc=select_color(m),
+        transform=ax.transData
+    ))
+    """
+
+
 def set_datetime_axis(ax, timestamps):
     time_format = "%H:%M"
     times = []
@@ -115,7 +163,7 @@ def set_datetime_axis(ax, timestamps):
         times.append(time.strftime(time_format))
 
     ax.xaxis.set_minor_formatter(mdates.DateFormatter(time_format))
-    _=plt.xticks(rotation=45) 
+    #_=plt.xticks(rotation=45) 
 
     return times
 
@@ -124,7 +172,6 @@ def strip_seconds(time):
     # Returns: a stripped datetime object
 
     return datetime.strptime(time.strftime(r'%y-%m-%d %H:%M'), r'%y-%m-%d %H:%M')
-
 
 def extract_last_hour_data(cursor):
     # cursor: the conn.cursor() to the db
