@@ -5,6 +5,15 @@ from datetime import datetime
 import sqlite3
 
 def update_db(data):
+    """
+    Updates the database, and returns price data based on intervals
+
+    Parameters: 
+        - data: The dictionary holding the api response
+
+    Returns:
+        a dictionary of price data based on intervals [hour, day, week, month, year]
+    """
     conn = sqlite3.connect('crypto.db')
     cursor = conn.cursor()
 
@@ -62,9 +71,6 @@ def update_db(data):
         cursor.executemany(f"INSERT INTO eth_data (timestamp, price, {key})\
                                     VALUES (?, ?, ?)\
                                ON CONFLICT(timestamp) DO NOTHING", values)
-
-    # Select the full data rows
-    # select datetime(timestamp, 'unixepoch', 'localtime'), price, hour, day from eth_data where month is not null and year is not null;
 
     conn.commit()
     cursor.close()

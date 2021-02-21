@@ -5,8 +5,6 @@
 # 4. The definition of interval might be misleading here; An example would clear it up:
 #    If we are getting the price of a coin in interval=hour, then we mean the historical prices in the past hour
 
-from pprint import pprint
-
 import requests, json, sys, time
 import matplotlib.pyplot as plt
 from math import ceil
@@ -15,13 +13,34 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from matplotlib.animation import FuncAnimation
 import matplotlib.animation as animation
-from matplotlib.lines import Line2D
 import matplotlib.dates as mdates
 import matplotlib.text as mtext
 from matplotlib.patches import Rectangle
 import sqlite3
+from threading import Thread
 
 from db import update_db
+from notify import send_mail
+
+""" Things to do before running the program """
+# Create the file individuals.json storing the following dictionary
+# {
+#   'from': '<receiver>'
+#   'to': '<sender>'
+# }
+# Use the following script:
+# import json
+# with open("individuals.json", "w") as fp:
+#   json.dump(<your_dictionary>, fp)
+
+# When to notify
+notifier_settings = {
+    'upper_value_threshold': 2500,
+    'lower_value_threshold': 1500,
+    'hourly_percent_threshold': 0.01,
+}
+# Minimum wait time between mails is 30 mins
+wait_time = 60 * 30
 
 
 def main():
@@ -35,6 +54,12 @@ def main():
     option = m[1] if len(m:=sys.argv) > 1 else ""
     option = option.lower()
 
+    # For the continuous data collection options, call the notifier
+    if option in ['--collect', '--live']:
+        # We want the notifier to close with the program
+        thread = Thread(target=notify, daemon=True)
+        thread.start()
+
     # This option collects price data every minute and stores it into the database in perpetuity until interrupted by the user.
     if option == '--collect':
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -46,19 +71,14 @@ def main():
                 print(f"Next update in (1 minute): {next_update_time}")
                 time.sleep(60)
 
-    # This function visualizes the historical prices based on interval.
-    elif option == '--viz':
-        # Graph of the intervals
-        plt.figure(figsize=(12, 6))
-        # Use the second param to select between intervals: ['hour', 'day', 'week', 'month', 'year']
-        plot_interval(intervals, ['hour', 'day'])
-        plt.show()
-
     elif option == '--live':
+        # Note: There is delay between when the graph updates between minutes
+        # that is because coinbase takes a few seconds to update their latest value
+        # so it will take 10 - 15 seconds more to update to the latest price
         # Update an existing graph every minute:
         fig = plt.figure(figsize=(12,6))
         ax = plt.subplot(111)
-        # The text boxes correlate to: latest_price, current_time, percent_change over the period respectively
+        # The text fields correlate to: latest_price, current_time, percent_change over the period respectively
         texts = [ax.text(0, 0, ""), ax.text(0, 0, ""), ax.text(0, 0, "")]
 
         conn = sqlite3.connect('crypto.db')
@@ -82,32 +102,103 @@ def main():
         #plt.tight_layout()
         plt.show()
 
+    # This function visualizes the historical prices based on interval.
+    elif option == '--viz':
+        # Graph of the intervals
+        plt.figure(figsize=(12, 6))
+        # Use the second param to select between intervals: ['hour', 'day', 'week', 'month', 'year']
+        plot_interval(intervals, ['hour', 'day'])
+        plt.show()
+
+
+def notify():
+    conn = sqlite3.connect('crypto.db')
+    cursor = conn.cursor()
+    
+    last_mail_time = None 
+
+    while True:
+        # Get the latest price:
+        latest_price, percent_change = map(float, cursor.execute("SELECT price, hour from eth_data where hour not null order by timestamp desc limit 1;").fetchone())
+        
+
+        if can_send_a_mail(last_mail_time):
+            if abs(percent_change * 100) >= notifier_settings['hourly_percent_threshold']:
+                subject = f"ETH is {'rising' if percent_change > 0 else 'dropping'} fast"
+                body = f"Current Stats - \n\t Price: {latest_price:.2f} CAD \n\t Percent Change: {'+' if percent_change > 0 else ''}{percent_change * 100:.2f} (last hour)"
+                send_mail(subject, body)
+
+                print(subject)
+                print(body)
+
+                last_mail_time = time.time()
+
+        # Wait a minute
+        time.sleep(60)
+
+
+def can_send_a_mail(last_mail_time):
+    """
+    Check if the program can send a mail based on the minimum waiting time
+
+    Parameters:
+        - last_mail_time: seconds (float)
+    """
+
+    now = time.time()
+
+    # If no mail has been sent so far or time difference is higher than the minimum
+    return not last_mail_time or (now - last_mail_time >= wait_time)
+
+
 def animate(frame, cursor, line, ax, texts):
+    """
+    The function for updating the figure per frame during animation
+
+    # Parameters:
+        - frame: nth frame (int)
+        - cursor: cursor to db
+        - line: the matplotlib.Line2d to update
+        - ax: the matplotlib.Axes to update
+        - texts: the matplotlib.Text fields to update
+    """
+
     print(frame)
+    # Update the db
     _ = fetch_and_update()
 
+    # Get the price data of the last hour
     latest = cursor.execute('SELECT price from eth_data order by timestamp desc limit 1;').fetchone()[0]
     timestamps, prices = extract_last_hour_data(cursor)
+
     times = set_datetime_axis(ax, timestamps)
-
     line.set_data(times, prices)
-
     update_axis(times, prices, ax, texts)
 
     return line
 
+
 def update_axis(times, prices, ax, texts):
+    """
+    Set the axes limit and ticks, and update the text fields
+
+    Parameter:
+        - times: x-ticks [check set_datetime_axis for more details]
+        - prices: y-data 
+        - ax: a matplotlib.Axes object 
+        - texts: a list of matplotlib.Text
+    """
     latest_price_text, current_time_text, percent_change_text = texts
 
     ax.set_ylim(min(prices) - 10, max(prices) + 10)
     ax.set_xticks(times[::5] + [times[-1]])
     ax.set_xlim(times[0], times[-1])
 
-    # Update Latest price text
+    # Update  latest price text
     latest_price_text.set(
         x = times[0],
         y = max(prices) + 10.5,
-        text = f"Latest Price: {prices[-1]}",
+        text = f"Latest Price: {prices[-1]:.2f}",
         fontsize = 'xx-large'
     )
 
@@ -119,8 +210,8 @@ def update_axis(times, prices, ax, texts):
         fontsize = 'xx-large'
     )
 
-    # This gets the width and height of current_time_text interms of data coordinates
-    # The x-axis is a real number line stretching from 0 to 59
+    # This gets the width and height of current_time_text in terms of data coordinates
+    # FYI: In data coords, the x-axis is a real number line stretching from 0 to 59
     bb = ((m := current_time_text).get_window_extent(m.get_figure().canvas.get_renderer()).inverse_transformed(ax.transData))
 
     # Adjust the text box's x coord by shifting it to the left by its width 
@@ -136,7 +227,7 @@ def update_axis(times, prices, ax, texts):
     percent_change_text.set(
         x = lp_bb.x1+0.1,
         y = lp_bb.y1,
-        text = f"{'-' if percent_change < 0 else '+'}{percent_change:.2f}%",
+        text = f"{'-' if percent_change < 0 else '+'}{abs(percent_change):.2f}%",
         color = 'r' if percent_change < 0 else 'g',
         transform=ax.transData
     )
@@ -156,6 +247,17 @@ def update_axis(times, prices, ax, texts):
 
 
 def set_datetime_axis(ax, timestamps):
+    """
+    Formats the xaxis, and returns the ticks
+
+    Parameters: 
+        - ax: a single matplotlib.Axes object
+        - timestamps: ...
+
+    Returns:
+        a list of strings of time data in the following format that can be uses as x-ticks
+    """
+
     time_format = "%H:%M"
     times = []
     for timestamp in timestamps:
@@ -168,13 +270,29 @@ def set_datetime_axis(ax, timestamps):
     return times
 
 def strip_seconds(time):
-    # time: datetime object
-    # Returns: a stripped datetime object
+    """
+    Format a datetime object by stripping the seconds and return another datetime object
+
+    Parameters: 
+        - time: datetime object
+    
+    Returns:
+        - a datetime object
+    """
 
     return datetime.strptime(time.strftime(r'%y-%m-%d %H:%M'), r'%y-%m-%d %H:%M')
 
+
 def extract_last_hour_data(cursor):
-    # cursor: the conn.cursor() to the db
+    """
+    Get the price data of the last our
+
+    Parameters:
+        - cursor: cursor to the db
+    
+    Returns: (timestamps, prices) # the prices correspond to the timestamps parallely
+    # the timestamps are in ascending order
+    """
 
     # Gets all the data from the last hour
     last_hour_data = cursor.execute(r"""select timestamp, datetime(timestamp, 'unixepoch', 'localtime'), price 
@@ -192,10 +310,10 @@ def extract_last_hour_data(cursor):
 
         data[time] = price 
 
+    # Divides the dictionary into parallel lists with timestamps sorted by ascending order
     return zip(*[(time, data[time]) for time in sorted(data.keys(), reverse=False)])
 
 
-        
 def fetch_and_update():
     """
     The function fetches the json file from the coinbase's endpoint:
