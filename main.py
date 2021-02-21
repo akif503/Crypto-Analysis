@@ -8,9 +8,16 @@
 import requests, json, sys, time
 import matplotlib.pyplot as plt
 from math import ceil
+import numpy as np
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from db import update_db
+from matplotlib.animation import FuncAnimation
+import matplotlib.animation as animation
+from matplotlib.lines import Line2D
+import matplotlib.dates as mdates
+import matplotlib.text as mtext
+import sqlite3
 
 
 def main():
@@ -37,14 +44,111 @@ def main():
 
     # This function visualizes the historical prices based on interval.
     elif option == '--viz':
-        """
-        Graph of the intervals
-        """
+        # Graph of the intervals
         plt.figure(figsize=(16, 8))
+        # Use the second param to select between intervals: ['hour', 'day', 'week', 'month', 'year']
         plot_interval(intervals, ['hour', 'day'])
         plt.show()
-        
 
+    elif option == '--realtime':
+        # Update an existing graph every minute:
+        fig = plt.figure(figsize=(16, 9))
+        ax = plt.subplot(111)
+        latest_price_text = ax.text(0, 0, "")
+
+        conn = sqlite3.connect('crypto.db')
+        cursor = conn.cursor()
+
+        latest = cursor.execute('SELECT price from eth_data order by timestamp desc limit 1;').fetchone()[0]
+        timestamps, prices = extract_last_hour_data(cursor)
+        times = set_datetime_axis(ax, timestamps)
+
+        line = plt.plot(times, prices, color='b')[0]
+
+        update_axis(times, prices, ax, latest_price_text)
+
+        anim = FuncAnimation(fig, animate, frames=1000, repeat=False, init_func=None, blit=False, interval = 10 * 1000, fargs=(cursor, line, ax, latest_price_text))
+
+        Writer = animation.writers['ffmpeg']
+        writer = Writer(fps=1, metadata=dict(artist='Akif'), bitrate=1800)
+
+        #anim.save('data.mp4', writer=writer)
+        
+        plt.tight_layout()
+        plt.show()
+
+
+def animate(frame, cursor, line, ax, latest_price_text):
+    print(frame)
+    _ = fetch_and_update()
+
+    latest = cursor.execute('SELECT price from eth_data order by timestamp desc limit 1;').fetchone()[0]
+    timestamps, prices = extract_last_hour_data(cursor)
+    times = set_datetime_axis(ax, timestamps)
+
+    print(times[-1], prices[-1])
+    line.set_data(times, prices)
+
+    update_axis(times, prices, ax, latest_price_text)
+
+    return line
+    #ax.set_title(interval.capitalize())
+
+def update_axis(times, prices, ax, latest_price_text):
+    ax.set_ylim(min(prices) - 10, max(prices) + 10)
+    ax.set_xticks(times)
+    ax.set_xlim(times[0], times[-1])
+
+    # Update Latest price text
+    latest_price_text.set(
+        x = times[0],
+        y = max(prices) + 10.5,
+        text = f"Latest Price: {prices[-1]}",
+        fontsize = 'xx-large'
+    )
+
+def set_datetime_axis(ax, timestamps):
+    time_format = "%H:%M"
+    times = []
+    for timestamp in timestamps:
+        time = datetime.fromtimestamp(timestamp)
+        times.append(time.strftime(time_format))
+
+    ax.xaxis.set_minor_formatter(mdates.DateFormatter(time_format))
+    _=plt.xticks(rotation=45) 
+
+    return times
+
+def strip_seconds(time):
+    # time: datetime object
+    # Returns: a stripped datetime object
+
+    return datetime.strptime(time.strftime(r'%y-%m-%d %H:%M'), r'%y-%m-%d %H:%M')
+
+
+def extract_last_hour_data(cursor):
+    # cursor: the conn.cursor() to the db
+
+    # Gets all the data from the last hour
+    last_hour_data = cursor.execute(r"""select timestamp, datetime(timestamp, 'unixepoch', 'localtime'), price 
+                                        from eth_data where timestamp >= (cast(strftime('%s', 'now') as int) - 60*60) 
+                                        order by timestamp desc;""").fetchall()
+
+    # Indexed by time
+    data = {}
+
+    for timestamp, localtime, price in last_hour_data:
+        time = strip_seconds(datetime.fromtimestamp(timestamp)).timestamp()
+
+        if data.get(time, False):
+            continue
+
+        data[time] = price 
+
+    return zip(*[(time, data[time]) for time in sorted(data.keys(), reverse=False)])
+
+
+        
 def fetch_and_update():
     """
     The function fetches the json file from the coinbase's endpoint:
@@ -143,13 +247,14 @@ def plot_interval(intervals: dict, which_intervals: [str]) -> None:
 
     for idx, interval in enumerate(which_intervals):
         #interval = which_intervals[0]
-        price_vol_tuples = np.array(intervals[interval]['prices'], dtype=np.float32)
+        time_price_tuples = np.array(intervals[interval]['prices'], dtype=np.float32)
 
-        #volume = price_vol_tuples[:, 1]
-        prices = np.flip(price_vol_tuples[:, 0])
+        prices = np.flip(time_price_tuples[:, 0])
+        timestamps = np.flip(time_price_tuples[:, 1])
 
         ax = plt.subplot(*positions[idx])
         ax.plot(prices)
+        print(datetime.fromtimestamp(float(timestamps[0])), datetime.fromtimestamp(float(timestamps[1])))
         ax.set_title(interval.capitalize())
 
 

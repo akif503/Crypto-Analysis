@@ -39,7 +39,7 @@ data: {
     prices: [
         all: {
             percent_change: 
-            prices: [[price, volume]] 
+            prices: [[price, timestamp]] 
         },
 
         day: {
