@@ -3,10 +3,10 @@
 
 ## Motivation:
 The program sprang out of a curiosity to programmatically manage a portfolio of cryptocurrencies. However, it's a big concept, so I wanted to start my research into this field through understanding the market of the **ethereum** cryptocurrency. For that reason, I used **coinbase's** api to collect the eth price data, and implemented 4 functionalities that are useful tools for market analysis:
-- Collect and store ether price data.
+- Collect and store ether price data in a database.
 - Show a continuously changing live graph of ether's price.
 - Notify the user via mail if the price of eth changes by a certain threshold.
-- See how the price changed over specific intervals, this is similar to the one on the coinbase's website.
+- See how the price changed over specific intervals.
 
 ## Interface:
 The entry point of the program is main.py using the following command:
