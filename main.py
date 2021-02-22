@@ -51,7 +51,8 @@ def main():
 
     data, intervals = ret
 
-    option = m[1] if len(m:=sys.argv) > 1 else ""
+    args = sys.argv
+    option = args[1] if len(args) > 1 else ""
     option = option.lower()
 
     # For the continuous data collection options, call the notifier
@@ -76,7 +77,7 @@ def main():
         # that is because coinbase takes a few seconds to update their latest value
         # so it will take 10 - 15 seconds more to update to the latest price
         # Update an existing graph every minute:
-        fig = plt.figure(figsize=(12,6))
+        fig = plt.figure(figsize=(16,8))
         ax = plt.subplot(111)
         # The text fields correlate to: latest_price, current_time, percent_change over the period respectively
         texts = [ax.text(0, 0, ""), ax.text(0, 0, ""), ax.text(0, 0, "")]
@@ -92,22 +93,37 @@ def main():
 
         update_axis(times, prices, ax, texts)
 
-        anim = FuncAnimation(fig, animate, frames=1000, repeat=False, init_func=None, blit=False, interval = 10 * 1000, fargs=(cursor, line, ax, texts))
+        anim = FuncAnimation(fig, animate, frames=2500, repeat=False, init_func=None, blit=False, interval = 10 * 1000, fargs=(cursor, line, ax, texts))
 
-        Writer = animation.writers['ffmpeg']
-        writer = Writer(fps=1, metadata=dict(artist='Akif'), bitrate=1800)
+        def progress_callback(cf, tf):
+            print(f'Saving frame {cf} of {tf}')
+            # Wait 1 seconds between frames
+            time.sleep(1)
 
-        #anim.save('data.mp4', writer=writer)
-        
-        #plt.tight_layout()
+        # Total duration: interval / fps
+        #anim.save('data.mp4', fps=30, dpi=100, progress_callback=progress_callback)
+
         plt.show()
 
     # This function visualizes the historical prices based on interval.
     elif option == '--viz':
         # Graph of the intervals
-        plt.figure(figsize=(12, 6))
+        fig = plt.figure(figsize=(16, 8))
+
+        mapping = {
+            'h': 'hour',
+            'd': 'day',
+            'w': 'week',
+            'm': 'month',
+            'y': 'year'
+        }
+
+        user_choosen_intervals = args[2].lower() if len(args) > 2 else 'hd' 
+
+        show_intervals = [l for s, l in mapping.items() if s in user_choosen_intervals]
         # Use the second param to select between intervals: ['hour', 'day', 'week', 'month', 'year']
-        plot_interval(intervals, ['hour', 'day'])
+        plot_interval(intervals, show_intervals)
+        fig.suptitle('Trend over an hour, and a day')
         plt.show()
 
 
@@ -163,7 +179,6 @@ def animate(frame, cursor, line, ax, texts):
         - texts: the matplotlib.Text fields to update
     """
 
-    print(frame)
     # Update the db
     _ = fetch_and_update()
 
@@ -212,7 +227,7 @@ def update_axis(times, prices, ax, texts):
 
     # This gets the width and height of current_time_text in terms of data coordinates
     # FYI: In data coords, the x-axis is a real number line stretching from 0 to 59
-    bb = ((m := current_time_text).get_window_extent(m.get_figure().canvas.get_renderer()).inverse_transformed(ax.transData))
+    bb = ((m := current_time_text).get_window_extent(m.get_figure().canvas.get_renderer()).transformed(ax.transData.inverted()))
 
     # Adjust the text box's x coord by shifting it to the left by its width 
     current_time_text.set(
@@ -223,7 +238,7 @@ def update_axis(times, prices, ax, texts):
     # Percent Change:
     percent_change = (((prices[-1] - prices[0]) / prices[0]) * 100)
 
-    lp_bb = ((m := latest_price_text).get_window_extent(m.get_figure().canvas.get_renderer()).inverse_transformed(ax.transData))
+    lp_bb = ((m := latest_price_text).get_window_extent(m.get_figure().canvas.get_renderer()).transformed(ax.transData.inverted()))
     percent_change_text.set(
         x = lp_bb.x1+0.1,
         y = lp_bb.y1,
