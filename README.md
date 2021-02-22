@@ -27,7 +27,7 @@ This option perpetually calls one of the coinbase's end-point to fetch price dat
 python main.py --live
 ``` 
 
-This option continuously updates a graph whenever the latest price is updated in the coinbase's server and stores it on to the same database locally that is shared by the collect option. A speeded out version of the output is given below:
+This option continuously updates a graph whenever the latest price is updated in the coinbase's server and stores it on to the same database locally that is shared by the collect option. A speeded out version of the output is given below (*it might take a while to load*):
 
 ![graph](./resources/live-graph.gif)
 
